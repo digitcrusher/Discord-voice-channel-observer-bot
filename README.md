@@ -4,7 +4,7 @@ Just as the name suggests, this is a Discord bot that monitors voice channels an
 
 ## Setup
 
-1. Install Python 3 and discord.py.
+1. Install Python 3, discord.py and nest_asyncio.
 2. Put your bot's token in `config.json`.
 3. Run `./main.py`.
 4. Enjoy.
