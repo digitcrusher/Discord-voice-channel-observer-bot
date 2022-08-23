@@ -8,3 +8,5 @@ Just as the name suggests, this is a Discord bot that monitors voice channels an
 2. Put your bot's token in `config.json`.
 3. Run `./main.py`.
 4. Enjoy.
+
+The bot will save its data in `database.json` and `database.json.old`.
