@@ -20,7 +20,7 @@ import asyncio, datetime, discord, json, logging, nest_asyncio, os, sys, threadi
 from copy import deepcopy
 nest_asyncio.apply()
 
-# TODO: add comments
+# TODO: add mute, unmute, deafen, undeafen, stream, video events
 # TODO: add gatherings
 # TODO: add a command prompt
 # TODO: add generating activity reports
@@ -49,6 +49,8 @@ database = {
   'events': [],
   'active_users': {},
   'available_channels': {},
+  'messages_to_events': {},
+  'cache_eventc': 0,
 }
 should_save_database = False
 database_lock = threading.RLock()
@@ -109,27 +111,40 @@ def add_event(event):
 
   with database_lock:
     database['events'].append(event)
-    update_cache_with(event)
     global should_save_database
     should_save_database = True
+    update_cache()
 
   log_event(event)
 
-def update_cache_with(event):
+def update_cache():
   with database_lock:
-    if event['type'] in ['join', 'leave']:
-      guild, channel, user = event['guild'], event['channel'], event['user']
-      if event['type'] == 'join':
-        database['active_users'].setdefault(guild, {}).setdefault(channel, set()).add(user)
-      else:
-        database['active_users'][guild][channel].remove(user)
+    # This assumes that events in the database are in chronological order.
+    i = database['cache_eventc']
+    while i < len(database['events']):
+      event = database['events'][i]
+      if not event:
+        continue
 
-    elif event['type'] in ['create', 'delete']:
-      guild, channel = event['guild'], event['channel']
-      if event['type'] == 'create':
-        database['available_channels'].setdefault(guild, set()).add(channel)
-      else:
-        database['available_channels'][guild].remove(channel)
+      if event['type'] in ['join', 'leave']:
+        guild, channel, user = event['guild'], event['channel'], event['user']
+        if event['type'] == 'join':
+          database['active_users'].setdefault(guild, {}).setdefault(channel, set()).add(user)
+        else:
+          database['active_users'][guild][channel].remove(user)
+
+      elif event['type'] in ['create', 'delete']:
+        guild, channel = event['guild'], event['channel']
+        if event['type'] == 'create':
+          database['available_channels'].setdefault(guild, set()).add(channel)
+        else:
+          database['available_channels'][guild].remove(channel)
+
+      elif event['type'] == 'comment':
+        database['messages_to_events'][event['message']] = i
+
+      database['cache_eventc'] += 1
+      i += 1
 
     global should_save_database
     should_save_database = True
@@ -140,21 +155,50 @@ def log_event(event):
   elif event['type'] == 'leave':
     logging.info(f'User {event["user"]} left voice channel {event["channel"]} in guild {event["guild"]}')
   elif event['type'] == 'create':
-    logging.info(f'Channel {event["channel"]} has been created in guild {event["guild"]}')
+    logging.info(f'Channel {event["channel"]} was created in guild {event["guild"]}')
   elif event['type'] == 'delete':
-    logging.info(f'Channel {event["channel"]} has been deleted in guild {event["guild"]}')
+    logging.info(f'Channel {event["channel"]} was deleted in guild {event["guild"]}')
+  elif event['type'] == 'comment':
+    logging.info(f'User {event["author"]} added a comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+  else:
+    raise Exception(f'Unknown event type: `{event["type"]}`')
 
-def rebuild_cache():
+def clean_database():
   with database_lock:
+    events = database['events']
+    database['events'] = []
+    for event in events:
+      if event:
+        database['events'].append(event)
+
     database['active_users'] = {}
     database['available_channels'] = {}
-
-    # This assumes that events in the database are in chronological order.
-    for event in database['events']:
-      update_cache_with(event)
+    database['messages_to_events'] = {}
+    database['cache_eventc'] = 0
+    update_cache()
 
     global should_save_database
     should_save_database = True
+
+def delete_comment(message):
+  with database_lock:
+    if message in database['messages_to_events']:
+      event = database['events'][database['messages_to_events'][message]]
+      database['events'][database['messages_to_events'][message]] = None
+      del database['messages_to_events'][message]
+      global should_save_database
+      should_save_database = True
+
+      logging.info(f'Comment {event["message"]} by user {event["author"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
+
+def edit_comment(message, content):
+  with database_lock:
+    event = database['events'][database['messages_to_events'][message]]
+    database['events'][database['messages_to_events'][message]]['content'] = content
+    global should_save_database
+    should_save_database = True
+
+    logging.info(f'User {event["author"]} edited comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
 
 def scan_active_users(reason):
   logging.info(f'Scanning active users with reason `{reason}`')
@@ -239,14 +283,13 @@ async def on_ready():
     scan_active_users('bot_ready')
 
 @client.event
-async def on_message(message):
-  logging.info(f'Messsage from `{message.author}`: `{message.content}`')
-
-@client.event
 async def on_voice_state_update(member, before, after):
+  if before.channel == after.channel:
+    return
+
   event = {
     'type': None,
-    'guild': member.guild.id,
+    'guild': None,
     'channel': None,
     'user': member.id,
     'cause': 'event.user',
@@ -254,17 +297,20 @@ async def on_voice_state_update(member, before, after):
 
   if not after.channel:
     event['type'] = 'leave'
+    event['guild'] = before.channel.guild.id
     event['channel'] = before.channel.id
 
   elif before.channel != after.channel:
     if before.channel:
       event['type'] = 'leave'
+      event['guild'] = before.channel.guild.id
       event['channel'] = before.channel.id
       if after.afk:
         event['cause'] = 'event.afk'
       add_event(event)
 
     event['type'] = 'join'
+    event['guild'] = after.channel.guild.id
     event['channel'] = after.channel.id
 
   add_event(event)
@@ -302,6 +348,45 @@ async def on_guild_join(guild):
 async def on_guild_remove(guild):
   scan_active_users('guild')
   scan_available_channels('guild')
+
+@client.event
+async def on_message(message):
+  if message.author == message.guild.me:
+    return
+
+  content = message.content.lstrip()
+  if not content.startswith(f'<@{client.user.id}>'):
+    return
+  content = content.removeprefix(f'<@{client.user.id}>').strip()
+
+  if not content or message.author.voice == None:
+    await message.add_reaction('❌')
+    return
+
+  add_event({
+    'type': 'comment',
+    'guild': message.guild.id,
+    'channel': message.author.voice.channel.id,
+    'author': message.author.id,
+    'message_channel': message.channel.id,
+    'message': message.id,
+    'content': content,
+  })
+  await message.add_reaction('✅')
+
+@client.event
+async def on_raw_message_edit(payload):
+  content = payload.data['content'].lstrip().removeprefix(f'<@{client.user.id}>').strip()
+  edit_comment(payload.message_id, content)
+
+@client.event
+async def on_raw_message_delete(payload):
+  delete_comment(payload.message_id)
+
+@client.event
+async def on_raw_message_bulk_delete(payload):
+  for message in payload.message_ids:
+    delete_comment(message)
 
 
 
