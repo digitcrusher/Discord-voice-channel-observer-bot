@@ -22,7 +22,6 @@ nest_asyncio.apply()
 import bot, common, database
 from common import options
 
-# TODO: add mute, unmute, deafen, undeafen, stream, video events
 # TODO: add gatherings
 # TODO: add a command prompt
 # TODO: add generating activity reports

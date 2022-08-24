@@ -22,6 +22,7 @@ data = {
   'active_users': {},
   'available_channels': {},
   'messages_to_events': {},
+  'user_states': {},
   'cache_eventc': 0,
 }
 should_save = False
@@ -99,6 +100,8 @@ def add_event(event):
   event.update(old)
 
   with lock:
+    if event['type'] == 'user_state' and event['value'] == data['user_states'].get(event['user'], None):
+      return
     data['events'].append(event)
     global should_save
     should_save = True
@@ -132,6 +135,9 @@ def update_cache():
       elif event['type'] == 'comment':
         data['messages_to_events'][event['message']] = i
 
+      elif event['type'] == 'user_state':
+        data['user_states'][event['user']] = event['value']
+
       data['cache_eventc'] += 1
       i += 1
 
@@ -148,7 +154,9 @@ def log_event(event):
   elif event['type'] == 'delete':
     logging.info(f'Channel {event["channel"]} was deleted in guild {event["guild"]}')
   elif event['type'] == 'comment':
-    logging.info(f'User {event["author"]} added a comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {event["author"]} added a comment {event["message"]} for voice channel {event["channel"]} in guild {event["guild"]}')
+  elif event['type'] == 'user_state':
+    logging.info(f'User {event["user"]} in voice channel {event["channel"]} in guild {event["guild"]} changed their state to {event["value"]}')
   else:
     raise Exception(f'Unknown event type: `{event["type"]}`')
 
@@ -163,6 +171,7 @@ def clean():
     data['active_users'] = {}
     data['available_channels'] = {}
     data['messages_to_events'] = {}
+    data['user_states'] = {}
     data['cache_eventc'] = 0
     update_cache()
 
@@ -171,17 +180,20 @@ def clean():
 
 def delete_comment(message):
   with lock:
-    if message in data['messages_to_events']:
-      event = data['events'][data['messages_to_events'][message]]
-      data['events'][data['messages_to_events'][message]] = None
-      del data['messages_to_events'][message]
-      global should_save
-      should_save = True
+    if message not in data['messages_to_events']:
+      return
+    event = data['events'][data['messages_to_events'][message]]
+    data['events'][data['messages_to_events'][message]] = None
+    del data['messages_to_events'][message]
+    global should_save
+    should_save = True
 
-      logging.info(f'Comment {event["message"]} by user {event["author"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
+    logging.info(f'Comment {event["message"]} by user {event["author"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
 
 def edit_comment(message, content):
   with lock:
+    if message not in data['messages_to_events']:
+      return
     event = data['events'][data['messages_to_events'][message]]
     data['events'][data['messages_to_events'][message]]['content'] = content
     global should_save

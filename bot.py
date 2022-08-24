@@ -27,6 +27,17 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
+def voice_state_to_flags(state):
+  result = set()
+  if state.afk:         result.add('afk')
+  if state.self_mute:   result.add('mute.user')
+  if state.mute:        result.add('mute.guild')
+  if state.self_deaf:   result.add('deafen.user')
+  if state.deaf:        result.add('deafen.guild')
+  if state.self_stream: result.add('stream')
+  if state.self_video:  result.add('video')
+  return result
+
 def scan_active_users(reason):
   logging.info(f'Scanning active users with reason `{reason}`')
   with database.lock:
@@ -34,15 +45,23 @@ def scan_active_users(reason):
 
     for guild in client.guilds:
       for channel in guild.voice_channels:
-        for user in channel.members:
-          if user.id in active_users.get(guild.id, {}).get(channel.id, {}):
-            active_users[guild.id][channel.id].remove(user.id)
+        for member in channel.members:
+          database.add_event({
+            'type': 'user_state',
+            'guild': guild.id,
+            'channel': channel.id,
+            'user': member.id,
+            'value': voice_state_to_flags(member.voice),
+            'cause': 'scan.' + reason,
+          })
+          if member.id in active_users.get(guild.id, {}).get(channel.id, {}):
+            active_users[guild.id][channel.id].remove(member.id)
           else:
             database.add_event({
               'type': 'join',
               'guild': guild.id,
               'channel': channel.id,
-              'user': user.id,
+              'user': member.id,
               'cause': 'scan.' + reason,
             })
 
@@ -102,9 +121,6 @@ async def on_ready():
 
 @client.event
 async def on_voice_state_update(member, before, after):
-  if before.channel == after.channel:
-    return
-
   event = {
     'type': None,
     'guild': None,
@@ -117,8 +133,19 @@ async def on_voice_state_update(member, before, after):
     event['type'] = 'leave'
     event['guild'] = before.channel.guild.id
     event['channel'] = before.channel.id
+    database.add_event(event)
+    return
 
-  elif before.channel != after.channel:
+  user_state_event = {
+    'type': 'user_state',
+    'guild': after.channel.guild.id,
+    'channel': after.channel.id,
+    'user': member.id,
+    'value': voice_state_to_flags(after),
+    'cause': 'event',
+  }
+
+  if before.channel != after.channel:
     if before.channel:
       event['type'] = 'leave'
       event['guild'] = before.channel.guild.id
@@ -127,11 +154,14 @@ async def on_voice_state_update(member, before, after):
         event['cause'] = 'event.afk'
       database.add_event(event)
 
+    database.add_event(user_state_event)
+
     event['type'] = 'join'
     event['guild'] = after.channel.guild.id
     event['channel'] = after.channel.id
-
-  database.add_event(event)
+    database.add_event(event)
+  else:
+    database.add_event(user_state_event)
 
 @client.event
 async def on_guild_channel_create(channel):
@@ -194,7 +224,7 @@ async def on_message(message):
 
 @client.event
 async def on_raw_message_edit(payload):
-  content = payload.data['content'].lstrip().removeprefix(f'<@{client.user.id}>').strip()
+  content = payload.data.get('content', '').lstrip().removeprefix(f'<@{client.user.id}>').strip()
   database.edit_comment(payload.message_id, content)
 
 @client.event
