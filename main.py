@@ -20,7 +20,6 @@ import asyncio, datetime, discord, json, logging, nest_asyncio, os, sys, threadi
 from copy import deepcopy
 nest_asyncio.apply()
 
-# TODO: add channel create and delete events
 # TODO: add comments
 # TODO: add gatherings
 # TODO: add a command prompt
@@ -49,6 +48,7 @@ def load_config():
 database = {
   'events': [],
   'active_users': {},
+  'available_channels': {},
 }
 should_save_database = False
 database_lock = threading.RLock()
@@ -75,9 +75,9 @@ def load_database():
             except ValueError:
               result[key] = value
           return result
-      saved = json.load(open(config['database'], 'r'), object_hook=object_hook)
+      loaded = json.load(open(config['database'], 'r'), object_hook=object_hook)
 
-      database.update(saved)
+      database.update(loaded)
       global should_save_database
       should_save_database = False
     except FileNotFoundError:
@@ -103,55 +103,61 @@ def save_database():
     should_save_database = False
 
 def add_event(event):
-  with database_lock:
-    old = event
-    event = {'time': datetime.datetime.now().astimezone().isoformat()}
-    event.update(old)
+  old = event
+  event = {'time': datetime.datetime.now().astimezone().isoformat()}
+  event.update(old)
 
+  with database_lock:
     database['events'].append(event)
+    update_cache_with(event)
+    global should_save_database
+    should_save_database = True
+
+  log_event(event)
+
+def update_cache_with(event):
+  with database_lock:
     if event['type'] in ['join', 'leave']:
       guild, channel, user = event['guild'], event['channel'], event['user']
       if event['type'] == 'join':
         database['active_users'].setdefault(guild, {}).setdefault(channel, set()).add(user)
       else:
-        database['active_users'].setdefault(guild, {}).setdefault(channel, set()).remove(user)
+        database['active_users'][guild][channel].remove(user)
+
+    elif event['type'] in ['create', 'delete']:
+      guild, channel = event['guild'], event['channel']
+      if event['type'] == 'create':
+        database['available_channels'].setdefault(guild, set()).add(channel)
+      else:
+        database['available_channels'][guild].remove(channel)
+
     global should_save_database
     should_save_database = True
-
-    log_event(event)
 
 def log_event(event):
   if event['type'] == 'join':
     logging.info(f'User {event["user"]} joined voice channel {event["channel"]} in guild {event["guild"]}')
   elif event['type'] == 'leave':
     logging.info(f'User {event["user"]} left voice channel {event["channel"]} in guild {event["guild"]}')
+  elif event['type'] == 'create':
+    logging.info(f'Channel {event["channel"]} has been created in guild {event["guild"]}')
+  elif event['type'] == 'delete':
+    logging.info(f'Channel {event["channel"]} has been deleted in guild {event["guild"]}')
 
-def recache_active_users():
+def rebuild_cache():
   with database_lock:
-    result = {}
+    database['active_users'] = {}
+    database['available_channels'] = {}
 
     # This assumes that events in the database are in chronological order.
     for event in database['events']:
-      if event['type'] not in ['join', 'leave']:
-        continue
-      guild, channel, user = event['guild'], event['channel'], event['user']
-      if event['type'] == 'join':
-        result.setdefault(guild, {}).setdefault(channel, set()).add(user)
-      else:
-        result.setdefault(guild, {}).setdefault(channel, set()).remove(user)
+      update_cache_with(event)
 
-    database['active_users'] = result
     global should_save_database
     should_save_database = True
 
 def scan_active_users(reason):
-  if reason == 'permissions':
-    logging.info(f'Ignoring reason `{reason}` for scanning active users because bots can see all channels regardless of permissions for now')
-    return
-
   logging.info(f'Scanning active users with reason `{reason}`')
-
-  presence_channelc = 0
   with database_lock:
     active_users = deepcopy(database['active_users'])
 
@@ -168,7 +174,6 @@ def scan_active_users(reason):
               'user': user.id,
               'cause': 'scan.' + reason,
             })
-        presence_channelc += 1
 
     for guild, channels in active_users.items():
       for channel, users in channels.items():
@@ -181,6 +186,35 @@ def scan_active_users(reason):
             'cause': 'scan.' + reason,
           })
 
+def scan_available_channels(reason):
+  logging.info(f'Scanning available channels with reason `{reason}`')
+
+  presence_channelc = 0
+  with database_lock:
+    available_channels = deepcopy(database['available_channels'])
+
+    for guild in client.guilds:
+      for channel in guild.voice_channels:
+        if channel.id in available_channels.get(guild.id, set()):
+          available_channels[guild.id].remove(channel.id)
+        else:
+          add_event({
+            'type': 'create',
+            'guild': guild.id,
+            'channel': channel.id,
+            'cause': 'scan.' + reason,
+          })
+        presence_channelc += 1
+
+    for guild, channels in available_channels.items():
+      for channel in channels:
+        add_event({
+          'type': 'delete',
+          'guild': guild,
+          'channel': channel,
+          'cause': 'scan.' + reason,
+        })
+
   activity = discord.Activity(name=f'{presence_channelc} channels', type=discord.ActivityType.watching)
   asyncio.run(client.change_presence(activity=activity))
 
@@ -191,10 +225,18 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
+# The code below assumes that the bot can see all channels regardless of permissions.
+
 @client.event
 async def on_ready():
   logging.info(f'Logged in as `{client.user}`')
-  scan_active_users('bot_ready')
+  # This lock and the one in on_guild_join partially prevent situations where
+  # a user leaves immediately after the channel scan and their previous presence
+  # in the channel isn't registered.
+  with database_lock:
+    # The following order may cause a leave event following a delete event.
+    scan_available_channels('bot_ready')
+    scan_active_users('bot_ready')
 
 @client.event
 async def on_message(message):
@@ -228,30 +270,38 @@ async def on_voice_state_update(member, before, after):
   add_event(event)
 
 @client.event
-async def on_guild_channel_delete(channel):
+async def on_guild_channel_create(channel):
   if isinstance(channel, discord.VoiceChannel):
-    scan_active_users('channel')
+    add_event({
+      'type': 'create',
+      'guild': channel.guild.id,
+      'channel': channel.id,
+      'cause': 'event',
+    })
 
 @client.event
-async def on_guild_channel_update(before, after):
-  if isinstance(after, discord.VoiceChannel):
-    scan_active_users('permissions')
+async def on_guild_channel_delete(channel):
+  if isinstance(channel, discord.VoiceChannel):
+    # Ideally, we'd like to know when leave events are caused by channel
+    # deletion. Discord unfortunately doesn't provide us with such information,
+    # so we would have to set recent leave events' causes to event.delete here.
+    add_event({
+      'type': 'delete',
+      'guild': channel.guild.id,
+      'channel': channel.id,
+      'cause': 'event',
+    })
 
 @client.event
 async def on_guild_join(guild):
-  scan_active_users('guild')
+  with database_lock:
+    scan_available_channels('guild')
+    scan_active_users('guild')
 
 @client.event
 async def on_guild_remove(guild):
   scan_active_users('guild')
-
-@client.event
-async def on_guild_role_delete(role):
-  scan_active_users('permissions')
-
-@client.event
-async def on_guild_role_update(before, after):
-  scan_active_users('permissions')
+  scan_available_channels('guild')
 
 
 
