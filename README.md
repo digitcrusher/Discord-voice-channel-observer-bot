@@ -4,9 +4,10 @@ Just as the name suggests, this is a Discord bot that monitors voice channels an
 
 ## Setup
 
-1. Install Python 3, discord.py and nest_asyncio.
-2. Put your bot's token in `config.json`.
-3. Run `./main.py`.
-4. Enjoy.
+1. Make sure you have Python 3 installed.
+2. Install discord.py, which you can do with `pip3 install -r requirements.txt`.
+3. Put your bot's token in `config.json`.
+4. Run `./main.py`.
+5. Enjoy.
 
-The bot will save its data in `database.json` and `database.json.old`.
+The bot will save its data in `database.json` and `database.json.old`. You can connect to its console using `telnet localhost 4123`.

@@ -24,6 +24,10 @@ config = {
   'token': None,
   'database': 'database.json',
   'autosave': '1m',
+  'console_host': 'localhost',
+  'console_port': 4123,
+  'console_hello': 'Discord voice channel observer bot',
+  'console_timeout': '1m',
 }
 
 def load_config():
@@ -31,7 +35,7 @@ def load_config():
   try:
     config.update(json.load(open(options['config'], 'r')))
   except FileNotFoundError:
-    raise Exception(f'Config not found: `{options["config"]}`')
+    raise Exception(f'Config not found: {repr(options["config"])}')
 
 def parse_duration(string):
   units = {
@@ -54,5 +58,5 @@ def parse_duration(string):
         result += units['s'] * (float(value) if '.' in value else int(value))
         value = ''
     else:
-      raise Exception(f'Invalid duration: `{string}`')
+      raise Exception(f'Invalid duration: {repr(string)}')
   return result

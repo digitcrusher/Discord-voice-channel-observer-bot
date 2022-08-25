@@ -16,14 +16,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import discord, nest_asyncio, sys
-nest_asyncio.apply()
+import discord, sys
 
-import bot, common, database
+import bot, common, console, database
 from common import options
 
-# TODO: add gatherings
-# TODO: add a command prompt
 # TODO: add generating activity reports
 # TODO: add documentation
 
@@ -36,13 +33,20 @@ if __name__ == '__main__':
         i += 1
         options['config'] = args[i]
       except IndexError:
-        raise Exception(f'Expected a path to config after `{args[i - 1]}`')
+        raise Exception(f'Expected a path to config after {repr(args[i - 1])}')
     else:
-      raise Exception(f'Unknown option: `{args[i]}`')
+      raise Exception(f'Unknown option: {repr(args[i])}')
     i += 1
 
   discord.utils.setup_logging()
   common.load_config()
+  console.start()
   database.start()
+
   bot.run()
-  database.stop()
+
+  try: # The database may already have been stopped by the console.
+    database.stop()
+  except:
+    pass
+  console.stop()

@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import datetime, json, logging, os, threading
+import console
 from common import config, parse_duration
 
 data = {
@@ -77,13 +78,20 @@ def save():
     global should_save
     should_save = False
 
+autosave_thread = None
 autosave_stop = None
+
 def start():
+  global autosave_thread, autosave_stop
+  if autosave_thread or autosave_stop:
+    raise Exception('The database is already started')
+  logging.info('Starting database')
+
   load()
 
-  global autosave_stop
   autosave_stop = threading.Event()
   def autosave():
+    autosave_stop.clear()
     while not autosave_stop.is_set():
       autosave_stop.wait(timeout=parse_duration(config['autosave']))
       if should_save:
@@ -92,7 +100,33 @@ def start():
   autosave_thread.start()
 
 def stop():
+  global autosave_thread, autosave_stop
+  if not autosave_thread or not autosave_stop:
+    raise Exception('The database is already stopped')
+  logging.info('Stopping database')
+
   autosave_stop.set()
+  autosave_thread.join()
+  autosave_stop = None
+  autosave_thread = None
+
+def clean():
+  with lock:
+    events = data['events']
+    data['events'] = []
+    for event in events:
+      if event:
+        data['events'].append(event)
+
+    data['active_users'] = {}
+    data['available_channels'] = {}
+    data['messages_to_events'] = {}
+    data['user_states'] = {}
+    data['cache_eventc'] = 0
+    update_cache()
+
+    global should_save
+    should_save = True
 
 def add_event(event):
   old = event
@@ -158,25 +192,7 @@ def log_event(event):
   elif event['type'] == 'user_state':
     logging.info(f'User {event["user"]} in voice channel {event["channel"]} in guild {event["guild"]} changed their state to {event["value"]}')
   else:
-    raise Exception(f'Unknown event type: `{event["type"]}`')
-
-def clean():
-  with lock:
-    events = data['events']
-    data['events'] = []
-    for event in events:
-      if event:
-        data['events'].append(event)
-
-    data['active_users'] = {}
-    data['available_channels'] = {}
-    data['messages_to_events'] = {}
-    data['user_states'] = {}
-    data['cache_eventc'] = 0
-    update_cache()
-
-    global should_save
-    should_save = True
+    raise Exception(f'Unknown event type: {repr(event["type"])}')
 
 def delete_comment(message):
   with lock:
@@ -200,3 +216,12 @@ def edit_comment(message, content):
     should_save = True
 
     logging.info(f'User {event["author"]} edited comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+
+console.begin('database')
+console.register('data',  None, 'prints the database',              lambda: data)
+console.register('load',  None, 'loads the database from file',     load)
+console.register('save',  None, 'saves the database to file',       save)
+console.register('start', None, 'starts the database',              start)
+console.register('stop',  None, 'stops the database',               stop)
+console.register('clean', None, 'cleans and recaches the database', clean)
+console.end()
