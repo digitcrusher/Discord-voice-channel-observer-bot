@@ -22,9 +22,12 @@ data = {
   'events': [],
   'active_users': {},
   'available_channels': {},
-  'messages_to_events': {},
+  'message_to_event': {},
   'user_states': {},
   'cache_eventc': 0,
+  'channel_guilds': {},
+  'channel_names': {},
+  'user_names': {},
 }
 should_save = False
 lock = threading.RLock()
@@ -120,7 +123,7 @@ def clean():
 
     data['active_users'] = {}
     data['available_channels'] = {}
-    data['messages_to_events'] = {}
+    data['message_to_event'] = {}
     data['user_states'] = {}
     data['cache_eventc'] = 0
     update_cache()
@@ -167,7 +170,7 @@ def update_cache():
           data['available_channels'][guild].remove(channel)
 
       elif event['type'] == 'comment':
-        data['messages_to_events'][event['message']] = i
+        data['message_to_event'][event['message']] = i
 
       elif event['type'] == 'user_state':
         data['user_states'][event['user']] = event['value']
@@ -180,42 +183,42 @@ def update_cache():
 
 def log_event(event):
   if event['type'] == 'join':
-    logging.info(f'User {event["user"]} joined voice channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {event["user"]} joined channel {event["channel"]} in guild {event["guild"]}')
   elif event['type'] == 'leave':
-    logging.info(f'User {event["user"]} left voice channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {event["user"]} left channel {event["channel"]} in guild {event["guild"]}')
   elif event['type'] == 'create':
     logging.info(f'Channel {event["channel"]} was created in guild {event["guild"]}')
   elif event['type'] == 'delete':
     logging.info(f'Channel {event["channel"]} was deleted in guild {event["guild"]}')
   elif event['type'] == 'comment':
-    logging.info(f'User {event["author"]} added a comment {event["message"]} for voice channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {event["user"]} added a comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
   elif event['type'] == 'user_state':
-    logging.info(f'User {event["user"]} in voice channel {event["channel"]} in guild {event["guild"]} changed their state to {event["value"]}')
+    logging.info(f'User {event["user"]} in channel {event["channel"]} in guild {event["guild"]} changed their state to {event["value"]}')
   else:
     raise Exception(f'Unknown event type: {repr(event["type"])}')
 
 def delete_comment(message):
   with lock:
-    if message not in data['messages_to_events']:
+    if message not in data['message_to_event']:
       return
-    event = data['events'][data['messages_to_events'][message]]
-    data['events'][data['messages_to_events'][message]] = None
-    del data['messages_to_events'][message]
+    event = data['events'][data['message_to_event'][message]]
+    data['events'][data['message_to_event'][message]] = None
+    del data['message_to_event'][message]
     global should_save
     should_save = True
 
-    logging.info(f'Comment {event["message"]} by user {event["author"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
+    logging.info(f'Comment {event["message"]} by user {event["user"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
 
 def edit_comment(message, content):
   with lock:
-    if message not in data['messages_to_events']:
+    if message not in data['message_to_event']:
       return
-    event = data['events'][data['messages_to_events'][message]]
-    data['events'][data['messages_to_events'][message]]['content'] = content
+    event = data['events'][data['message_to_event'][message]]
+    data['events'][data['message_to_event'][message]]['content'] = content
     global should_save
     should_save = True
 
-    logging.info(f'User {event["author"]} edited comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {event["user"]} edited comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
 
 console.begin('database')
 console.register('data',  None, 'prints the database',              lambda: data)

@@ -88,7 +88,10 @@ def listen():
           client.send(b'\nI have to go, bye.\n')
         else:
           is_client_gone = True
-          client.send(b'\nThe connection got closed without a goodbye. How rude!\n')
+          try:
+            client.send(b'\nThe connection got closed without a goodbye. How rude!\n')
+          except BrokenPipeError:
+            pass
         break
       if chunk == b'\x04':
         client.send(b'\nGot end of transmission without a goodbye. How rude!\n')
@@ -135,8 +138,8 @@ def listen():
 
 @dataclass
 class Operation:
-  scope: ty.List[str]
-  names: ty.List[str]
+  scope: list[str]
+  names: list[str]
   params: ty.Optional[str]
   desc: str
   func: ty.Callable[[str], ty.Optional[any]]

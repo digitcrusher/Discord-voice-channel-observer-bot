@@ -17,11 +17,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import discord, sys
-
 import bot, common, console, database
 from common import options
 
-# TODO: add generating activity reports
 # TODO: add documentation
 
 if __name__ == '__main__':

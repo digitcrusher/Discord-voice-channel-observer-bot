@@ -28,6 +28,7 @@ config = {
   'console_port': 4123,
   'console_hello': 'Discord voice channel observer bot',
   'console_timeout': '1m',
+  'meeting_interval': '5m',
 }
 
 def load_config():
