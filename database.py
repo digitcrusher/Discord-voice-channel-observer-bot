@@ -14,7 +14,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import datetime, json, logging, os, threading
+import json, logging, os, threading
+from datetime import datetime
+
 import console
 from common import config, parse_duration
 
@@ -23,8 +25,10 @@ data = {
   'active_users': {},
   'available_channels': {},
   'message_to_event': {},
+  'user_last_comment_times': {},
   'user_states': {},
   'cache_eventc': 0,
+  'guild_names': {},
   'channel_guilds': {},
   'channel_names': {},
   'user_names': {},
@@ -124,6 +128,7 @@ def clean():
     data['active_users'] = {}
     data['available_channels'] = {}
     data['message_to_event'] = {}
+    data['user_last_comment_times'] = {}
     data['user_states'] = {}
     data['cache_eventc'] = 0
     update_cache()
@@ -131,14 +136,24 @@ def clean():
     global should_save
     should_save = True
 
+class Throttled(Exception):
+  pass
+
 def add_event(event):
   old = event
-  event = {'time': datetime.datetime.now().astimezone().isoformat()}
+  event = {'time': datetime.now().astimezone().isoformat()}
   event.update(old)
 
   with lock:
     if event['type'] == 'user_state' and event['value'] == data['user_states'].get(event['user'], None):
       return
+    elif event['type'] == 'comment' and event['user'] in data['user_last_comment_times']:
+      time = datetime.fromisoformat(event['time'])
+      last_comment = datetime.fromisoformat(data['user_last_comment_times'][event['user']])
+      cooldown = parse_duration(config['comment_cooldown'])
+      if (time - last_comment).total_seconds() < cooldown:
+        raise Throttled()
+
     data['events'].append(event)
     global should_save
     should_save = True
@@ -155,14 +170,14 @@ def update_cache():
       if not event:
         continue
 
-      if event['type'] in ['join', 'leave']:
+      if event['type'] in {'join', 'leave'}:
         guild, channel, user = event['guild'], event['channel'], event['user']
         if event['type'] == 'join':
           data['active_users'].setdefault(guild, {}).setdefault(channel, set()).add(user)
         else:
           data['active_users'][guild][channel].remove(user)
 
-      elif event['type'] in ['create', 'delete']:
+      elif event['type'] in {'create', 'delete'}:
         guild, channel = event['guild'], event['channel']
         if event['type'] == 'create':
           data['available_channels'].setdefault(guild, set()).add(channel)
@@ -171,6 +186,7 @@ def update_cache():
 
       elif event['type'] == 'comment':
         data['message_to_event'][event['message']] = i
+        data['user_last_comment_times'][event['user']] = event['time']
 
       elif event['type'] == 'user_state':
         data['user_states'][event['user']] = event['value']
@@ -182,18 +198,34 @@ def update_cache():
     should_save = True
 
 def log_event(event):
+  guild = event.get('guild', None)
+  if guild in data['guild_names']:
+    guild = repr(data['guild_names'][guild])
+
+  channel = event.get('channel', None)
+  if channel in data['channel_names']:
+    channel = repr(data['channel_names'][channel])
+
+  user = event.get('user', None)
+  if user in data['user_names']:
+    user = repr(data['user_names'][user])
+
   if event['type'] == 'join':
-    logging.info(f'User {event["user"]} joined channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {user} joined channel {channel} in guild {guild}')
   elif event['type'] == 'leave':
-    logging.info(f'User {event["user"]} left channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {user} left channel {channel} in guild {guild}')
   elif event['type'] == 'create':
-    logging.info(f'Channel {event["channel"]} was created in guild {event["guild"]}')
+    logging.info(f'Channel {channel} was created in guild {guild}')
   elif event['type'] == 'delete':
-    logging.info(f'Channel {event["channel"]} was deleted in guild {event["guild"]}')
+    logging.info(f'Channel {channel} was deleted in guild {guild}')
   elif event['type'] == 'comment':
-    logging.info(f'User {event["user"]} added a comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+    logging.info(f'User {user} added a comment {event["message"]} for channel {channel} in guild {guild}')
   elif event['type'] == 'user_state':
-    logging.info(f'User {event["user"]} in channel {event["channel"]} in guild {event["guild"]} changed their state to {event["value"]}')
+    logging.info(f'User {user} in channel {channel} in guild {guild} changed their state to {event["value"]}')
+  elif event['type'] == '_delete_comment':
+    logging.info(f'Comment {event["message"]} by user {user} for channel {channel} in guild {guild} was deleted')
+  elif event['type'] == '_edit_comment':
+    logging.info(f'User {user} edited comment {event["message"]} for channel {channel} in guild {guild}')
   else:
     raise Exception(f'Unknown event type: {repr(event["type"])}')
 
@@ -207,18 +239,21 @@ def delete_comment(message):
     global should_save
     should_save = True
 
-    logging.info(f'Comment {event["message"]} by user {event["user"]} for channel {event["channel"]} in guild {event["guild"]} was deleted')
+    event['type'] = '_delete_comment'
+    log_event(event)
 
 def edit_comment(message, content):
   with lock:
     if message not in data['message_to_event']:
       return
     event = data['events'][data['message_to_event'][message]]
-    data['events'][data['message_to_event'][message]]['content'] = content
+    event['content'] = content
     global should_save
     should_save = True
 
-    logging.info(f'User {event["user"]} edited comment {event["message"]} for channel {event["channel"]} in guild {event["guild"]}')
+    event = event.copy()
+    event['type'] = '_edit_comment'
+    log_event(event)
 
 console.begin('database')
 console.register('data',  None, 'prints the database',              lambda: data)

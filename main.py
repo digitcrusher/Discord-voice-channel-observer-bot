@@ -20,13 +20,11 @@ import discord, sys
 import bot, common, console, database
 from common import options
 
-# TODO: add documentation
-
 if __name__ == '__main__':
   i = 0
   args = sys.argv[1:]
   while i < len(args):
-    if args[i] in ['-c', '--config']:
+    if args[i] in {'-c', '--config'}:
       try:
         i += 1
         options['config'] = args[i]

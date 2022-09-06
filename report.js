@@ -42,23 +42,21 @@ function dateToString(date) {
 
 function moveIndicator(position) {
   const timeline = document.getElementById('timeline');
-  position = Math.min(position, timeline.clientHeight);
-
   const indicator = document.getElementById('indicator');
-  indicator.style.setProperty('--position', position + 'px');
+  indicator.style.setProperty('--position', Math.min(position, timeline.clientHeight) + 'px');
   indicator.innerText = '';
 
-  position = Math.max(position, 0);
   for(const period of timeline.children) {
     if(period === indicator) continue;
 
-    const height = period.clientHeight;
-    const time = new Date(period.dataset.begin * 1000), end = new Date(period.dataset.end * 1000);
-    time.setMilliseconds(time.getMilliseconds() + (end - time) * position / height);
-    indicator.innerText = dateToString(time);
+    // offsetTop is unfortunately rounded to the nearest integer which may cause off-by-one pixel errors.
+    const offset = period.offsetTop, height = period.clientHeight;
+    if(position < offset && indicator.innerText !== '') break;
 
-    position -= height; // HACK: Rounded down heights cause off-by-one pixel errors here.
-    if(position < 0) break;
+    const time = new Date(period.dataset.begin * 1000), end = new Date(period.dataset.end * 1000);
+    time.setMilliseconds(time.getMilliseconds() + (end - time) * Math.min((position - offset) / height, 1));
+    indicator.style.setProperty('--position', Math.min(position, offset + height) + 'px');
+    indicator.innerText = dateToString(time);
   }
 }
 

@@ -18,7 +18,7 @@ import asyncio, discord, io, logging, threading
 from copy import deepcopy
 
 import console, database, report
-from common import config
+from common import config, parse_duration
 
 # This code assumes that the bot can see all channels regardless of permissions.
 
@@ -72,16 +72,34 @@ def voice_state_to_flags(state):
   return result
 
 class Client(discord.Client):
-  async def scan_active_users(self, reason):
-    logging.info(f'Scanning active users with reason {repr(reason)}')
+  async def scan(self, reason):
+    logging.info(f'Scanning active users and available channels with reason {repr(reason)}')
+
+    presence_channelc = 0
     with database.lock:
       active_users = deepcopy(database.data['active_users'])
+      available_channels = deepcopy(database.data['available_channels'])
 
-      joins = []
+      delayed = []
       for guild in self.guilds:
+        database.data['guild_names'][guild.id] = guild.name
+
         for channel in guild.voice_channels:
+          if channel.id in available_channels.get(guild.id, set()):
+            available_channels[guild.id].remove(channel.id)
+          else:
+            delayed.append({
+              'type': 'create',
+              'guild': guild.id,
+              'channel': channel.id,
+              'cause': 'scan.' + reason,
+            })
+          database.data['channel_guilds'][channel.id] = channel.guild.id
+          database.data['channel_names'][channel.id] = channel.name
+          presence_channelc += 1
+
           for member in channel.members:
-            joins.append({
+            delayed.append({
               'type': 'user_state',
               'guild': guild.id,
               'channel': channel.id,
@@ -92,13 +110,14 @@ class Client(discord.Client):
             if member.id in active_users.get(guild.id, {}).get(channel.id, {}):
               active_users[guild.id][channel.id].remove(member.id)
             else:
-              joins.append({
+              delayed.append({
                 'type': 'join',
                 'guild': guild.id,
                 'channel': channel.id,
                 'user': member.id,
                 'cause': 'scan.' + reason,
               })
+            database.data['user_names'][member.id] = str(member)
 
       for guild, channels in active_users.items():
         for channel, users in channels.items():
@@ -111,29 +130,6 @@ class Client(discord.Client):
               'cause': 'scan.' + reason,
             })
 
-      for event in joins:
-        database.add_event(event)
-
-  async def scan_available_channels(self, reason):
-    logging.info(f'Scanning available channels with reason {repr(reason)}')
-
-    presence_channelc = 0
-    with database.lock:
-      available_channels = deepcopy(database.data['available_channels'])
-
-      for guild in self.guilds:
-        for channel in guild.voice_channels:
-          if channel.id in available_channels.get(guild.id, set()):
-            available_channels[guild.id].remove(channel.id)
-          else:
-            database.add_event({
-              'type': 'create',
-              'guild': guild.id,
-              'channel': channel.id,
-              'cause': 'scan.' + reason,
-            })
-          presence_channelc += 1
-
       for guild, channels in available_channels.items():
         for channel in channels:
           database.add_event({
@@ -143,34 +139,20 @@ class Client(discord.Client):
             'cause': 'scan.' + reason,
           })
 
+      for event in delayed:
+        database.add_event(event)
+
+      database.should_save = True
+
     activity = discord.Activity(name=f'{presence_channelc} channels', type=discord.ActivityType.watching)
     await self.change_presence(activity=activity)
 
-  async def scan_attributes(self):
-    logging.info('Scanning channel and user attributes')
-
-    # We don't need to lock the database here because this isn't any important stuff.
-    for guild in self.guilds:
-      for channel in guild.voice_channels:
-        database.data['channel_guilds'][channel.id] = channel.guild.id
-        database.data['channel_names'][channel.id] = channel.name
-        for member in channel.members:
-          database.data['user_names'][member.id] = f'{member.name}#{member.discriminator}'
-    database.should_save = True
-
   async def on_ready(self):
     logging.info(f'Logged in as {repr(str(self.user))}')
-    # This lock and the ones in on_guild_join and op_scan partially prevent
-    # situations where a user leaves immediately after the channel scan but
-    # their previous presence in the channel hasn't been registered yet.
-    with database.lock:
-      # HACK: The following order may cause a leave event following a delete event.
-      await self.scan_available_channels('bot_ready')
-      await self.scan_active_users('bot_ready')
-    await self.scan_attributes()
+    await self.scan('bot_ready')
 
   async def on_voice_state_update(self, member, before, after):
-    database.data['user_names'][member.id] = f'{member.name}#{member.discriminator}'
+    database.data['user_names'][member.id] = str(member)
     database.should_save = True
 
     event = {
@@ -237,46 +219,77 @@ class Client(discord.Client):
         'cause': 'event',
       })
 
-  async def on_guild_channel_update(self, channel):
-    if isinstance(channel, discord.VoiceChannel):
-      database.data['channel_names'][channel.id] = channel.name
+  async def on_guild_channel_update(self, before, after):
+    if isinstance(after, discord.VoiceChannel):
+      database.data['channel_names'][after.id] = after.name
       database.should_save = True
 
   async def on_guild_join(self, guild):
-    with database.lock:
-      await self.scan_available_channels('guild')
-      await self.scan_active_users('guild')
-    await self.scan_attributes()
+    await self.scan('guild')
 
   async def on_guild_remove(self, guild):
-    await self.scan_active_users('guild')
-    await self.scan_available_channels('guild')
+    await self.scan('guild')
+
+  async def on_guild_update(self, before, after):
+    database.data['guild_names'][after.id] = after.name
+    database.should_save = True
 
   async def on_message(self, message):
-    if message.author == message.guild.me:
+    if message.author == self.user:
       return
 
-    content = message.content.lstrip()
-    if not content.startswith(f'<@{self.user.id}>'):
-      return
-    content = content.removeprefix(f'<@{self.user.id}>').strip()
+    content = message.content.strip()
+    if not isinstance(message.channel, discord.DMChannel):
+      if not content.startswith(f'<@{self.user.id}>'):
+        return
+      content = content.removeprefix(f'<@{self.user.id}>').lstrip()
 
+    # IDEA: Recognize natural language questions
+    report_channel = None
     if not content and isinstance(message.channel, discord.VoiceChannel):
-      # IDEA: Recognize natural language questions
-      with io.StringIO(report.generate(message.channel.id)) as file:
-        await message.reply(file=discord.File(file, 'report.html'))
+      report_channel = message.channel.id
+    elif content.startswith('<#') and content.endswith('>'):
+      inside = content.removeprefix('<#').removesuffix('>')
+      if inside == inside.strip().lstrip('+-'):
+        try:
+          report_channel = int(inside)
+        except ValueError:
+          pass
 
-    elif content and message.author.voice != None:
-      database.add_event({
-        'type': 'comment',
-        'guild': message.guild.id,
-        'channel': message.author.voice.channel.id,
-        'user': message.author.id,
-        'message_channel': message.channel.id,
-        'message': message.id,
-        'content': content,
-      })
-      await message.add_reaction('✅')
+    if report_channel != None:
+      channel = self.get_channel(report_channel)
+      if channel and channel.permissions_for(message.author).view_channel:
+        with io.StringIO(report.generate(report_channel)) as file:
+          await message.reply(file=discord.File(file, 'report.html'))
+      else:
+        await message.add_reaction('❓')
+
+    elif content and isinstance(message.author, discord.Member) and message.author.voice != None:
+      try:
+        database.add_event({
+          'type': 'comment',
+          'guild': message.guild.id,
+          'channel': message.author.voice.channel.id,
+          'user': message.author.id,
+          'message_channel': message.channel.id,
+          'message': message.id,
+          'content': content,
+        })
+      except database.Throttled:
+        await message.add_reaction('⏳')
+      else:
+        await message.add_reaction('✅')
+
+    elif not content:
+      await message.reply(f'''\
+Hi there, <@{message.author.id}>!
+I'm a Discord bot that monitors activity in voice channels on this server. To generate an activity report that you can then download and open in your web browser, you can either:
+- mention me in that voice channel's chat,
+- DM me the voice channel's mention, or
+- mention me and then the voice channel in the same message in any channel.
+To mention a voice channel you have to copy its ID and put it inside `<#` and `>`. You can also comment on an ongoing meeting as one of its participants by mentioning me and then writing the comment's contents in the same message. Please note that everyone's ability to submit comments is limited to once every {parse_duration(config['comment_cooldown'])} seconds.
+
+Please direct all questions and feedback to my author's DMs - digitcrusher#8454. I'm licensed under the AGPL-3.0-or-later and you can view my original source code on https://github.com/digitcrusher/Discord-voice-channel-observer-bot''', suppress_embeds=True)
 
     else:
       await message.add_reaction('❌')
@@ -292,27 +305,8 @@ class Client(discord.Client):
     for message in payload.message_ids:
       database.delete_comment(message)
 
-def op_scan_active_users():
-  asyncio.run(client.scan_active_users('console'))
-
-def op_scan_available_channels():
-  asyncio.run(client.scan_available_channels('console'))
-
-def op_scan_attributes():
-  asyncio.run(client.scan_attributes())
-
-def op_scan():
-  # This is the same flawed order as in on_ready.
-  with database.lock:
-    op_scan_available_channels()
-    op_scan_active_users()
-  op_scan_attributes()
-
 console.begin('bot')
-console.register('start',                   None, 'starts the bot',                    start)
-console.register('stop',                    None, 'stops the bot',                     stop)
-console.register('scan_active_users',       None, 'scans voice channels for users',    op_scan_active_users)
-console.register('scan_available_channels', None, 'scans available voice channels',    op_scan_available_channels)
-console.register('scan_attributes',         None, 'scans channel and user attributes', op_scan_attributes)
-console.register('scan',                    None, 'scans all',                         op_scan)
+console.register('start', None, 'starts the bot',                            start)
+console.register('stop',  None, 'stops the bot',                             stop)
+console.register('scan',  None, 'scans active users and available channels', lambda: asyncio.run(client.scan('console')))
 console.end()

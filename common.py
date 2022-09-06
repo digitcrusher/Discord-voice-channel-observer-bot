@@ -21,14 +21,16 @@ options = {
 }
 
 config = {
-  'token': None,
-  'database': 'database.json',
-  'autosave': '1m',
-  'console_host': 'localhost',
+  'token': None,                                         # Your Discord bot's token
+  'database': 'database.json',                           # The path to the database file
+  'autosave': '1m',                                      # The regular time interval at which the database will be automatically saved if needed
+  'console_host': 'localhost',                           # These two are very much self-explanatory
   'console_port': 4123,
-  'console_hello': 'Discord voice channel observer bot',
-  'console_timeout': '1m',
-  'meeting_interval': '5m',
+  'console_hello': 'Discord voice channel observer bot', # The name that will be displayed in "… says hello!" after connecting to the console
+  'console_timeout': '1m',                               # The time after the last received command after which the connection to the console will be automatically closed
+  'meeting_interval': '5m',                              # The minimum time interval after the last user has left a channel required for a user joining to be considered the start of a new meeting
+  'meeting_userc': 2,                                    # The minimum number of participants required for a meeting to be included in a report
+  'comment_cooldown': '1m',                              # The time a user has to wait to be able to submit a comment again
 }
 
 def load_config():
@@ -37,6 +39,10 @@ def load_config():
     config.update(json.load(open(options['config'], 'r')))
   except FileNotFoundError:
     raise Exception(f'Config not found: {repr(options["config"])}')
+
+def save_config():
+  logging.info('Saving config')
+  json.dump(config, open(options['config'], 'w'), indent=2)
 
 def parse_duration(string):
   units = {

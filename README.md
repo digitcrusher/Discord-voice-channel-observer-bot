@@ -5,9 +5,10 @@ Just as the name suggests, this is a Discord bot that monitors voice channels an
 ## Setup
 
 1. Make sure you have Python 3 installed.
-2. Install discord.py, which you can do with `pip3 install -r requirements.txt`.
+2. Install discord.py 2.x, which you can do with `pip3 install -r requirements.txt`.
 3. Put your bot's token in `config.json`.
-4. Run `./main.py`.
-5. Enjoy.
+4. Set other available options in `config.json` at your will, a list of which you can find in [`common.py`](common.py#L23).
+5. Run `./main.py` or `./main.py -c <path to config>`.
+6. Enjoy.
 
-The bot will save its data in `database.json` and `database.json.old`. You can connect to its console using `telnet localhost 4123`.
+By default, the bot will save its data in `database.json` and `database.json.old` and its console will be open locally on port 4123, which you can connect to using `telnet localhost 4123`.

@@ -16,6 +16,8 @@
 
 import json, logging, pprint, socket, threading, time, traceback, typing as ty
 from dataclasses import dataclass
+
+import common
 from common import config, parse_duration
 
 server = None
@@ -214,24 +216,6 @@ def op_bye():
   should_stop_conn = True
   return 'Goodbye!'
 
-def op_config():
-  result = config.copy()
-  result['token'] = '[hidden from console commands]'
-  return result
-
-def op_set(arg):
-  key, _, value = arg.partition(' ')
-  config[key] = json.loads(value)
-
-def op_get(arg):
-  return op_config()[arg]
-
-register('help',   None,                 'prints this help message',       op_help)
-register('bye',    None,                 'closes this connection',         op_bye)
-register('config', None,                 'prints the config',              op_config)
-register('set',    '<key> <json value>', 'sets config key to value',       op_set)
-register('get',    '<key>',              'prints the value of config key', op_get)
-
 def op_restart():
   stop()
   # We have to delay the start() because otherwise it would override client and
@@ -245,6 +229,26 @@ def op_restart():
   delayed_start.start()
   return 'Restarting the console...'
 
-begin('console')
-register('restart', None, 'restarts the console', op_restart)
+register('help',    None, 'prints this help message', op_help)
+register('bye',     None, 'closes this connection',   op_bye)
+register('restart', None, 'restarts the console',     op_restart)
+
+def op_all():
+  result = config.copy()
+  result['token'] = '[hidden from console commands]'
+  return result
+
+def op_get(arg):
+  return op_config()[arg]
+
+def op_set(arg):
+  key, _, value = arg.partition(' ')
+  config[key] = json.loads(value)
+
+begin('config')
+register('all',  None,                 'prints the config',              op_all)
+register('get',  '<key>',              'prints the value of config key', op_get)
+register('set',  '<key> <json value>', 'sets config key to value',       op_set)
+register('load', None,                 'loads the config from file',     common.load_config)
+register('save', None,                 'saves the config to file',       common.save_config)
 end()
