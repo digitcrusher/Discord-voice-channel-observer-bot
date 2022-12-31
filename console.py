@@ -45,7 +45,7 @@ def stop():
   should_stop_listen = True
   should_stop_conn = True
 
-  if client:
+  if client is not None:
     # This will cancel a pending client.recv(). We can still send data to the
     # client after this because this closes the socket only for incoming data.
     client.shutdown(socket.SHUT_RD)
@@ -67,15 +67,21 @@ def listen():
       continue # We probably got cancelled by stop().
 
     logging.info(f'Console accepted connection from {addr[0]}:{addr[1]}')
-    client.send(f'{config["console_hello"]} says hello!\n'.encode())
-    client.send('Type "help" to get a list of available operations.\n'.encode())
+    try:
+      client.send(f'{config["console_hello"]} says hello!\n'.encode())
+      client.send('Type "help" to get a list of available operations.\n'.encode())
+    except BrokenPipeError:
+      pass
 
     is_client_gone = False
 
     global should_stop_conn
     should_stop_conn = False
     while not should_stop_conn:
-      client.send(b'> ')
+      try:
+        client.send(b'> ')
+      except BrokenPipeError:
+        pass
 
       timeout = parse_duration(config['console_timeout'])
       client.settimeout(timeout)
@@ -95,7 +101,7 @@ def listen():
           except BrokenPipeError:
             pass
         break
-      if chunk == b'\x04':
+      elif chunk == b'\x04':
         client.send(b'\nGot end of transmission without a goodbye. How rude!\n')
         break
 
@@ -118,13 +124,13 @@ def listen():
 
       try:
         reply = run(line)
-        if reply != None and not isinstance(reply, str):
-          reply = pprint.pformat(reply)
+        if reply is not None and not isinstance(reply, str):
+          reply = pprint.pformat(reply, sort_dicts=False)
       except Exception as e:
         logging.exception('Got exception while running console command')
         reply = ''.join(traceback.format_exception(None, e, e.__traceback__))
 
-      if reply != None:
+      if reply is not None:
         client.send(reply.encode())
         if not reply.endswith('\n'):
           client.send(b'\n')
@@ -162,7 +168,7 @@ def run(cmd):
 
   for op in operations:
     if name in ('.'.join(op.scope + [name]) for name in op.names):
-      if op.params:
+      if op.params is not None:
         return op.func(arg)
       elif arg:
         raise Exception(f'Operation {repr(name)} expects no arguments')
@@ -200,7 +206,7 @@ def op_help():
       if op.scope:
         a += '}'
 
-    if op.params:
+    if op.params is not None:
       a += ' ' + op.params
 
     lines.append((a, op.desc))
@@ -222,7 +228,7 @@ def op_restart():
   # should_stop_listen and we wouldn't be able to properly clean up and return
   # from listen().
   def target():
-    while client:
+    while client is not None:
       time.sleep(0.1)
     start()
   delayed_start = threading.Thread(target=target)
@@ -239,7 +245,7 @@ def op_all():
   return result
 
 def op_get(arg):
-  return op_config()[arg]
+  return op_all()[arg]
 
 def op_set(arg):
   key, _, value = arg.partition(' ')

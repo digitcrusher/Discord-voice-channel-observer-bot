@@ -20,6 +20,8 @@ from copy import deepcopy
 import console, database, report
 from common import config, parse_duration
 
+# IDEA: Transcripts
+
 # This code assumes that the bot can see all channels regardless of permissions.
 
 client = None
@@ -75,7 +77,7 @@ class Client(discord.Client):
   async def scan(self, reason):
     logging.info(f'Scanning active users and available channels with reason {repr(reason)}')
 
-    presence_channelc = 0
+    self.presence_channelc = 0
     with database.lock:
       active_users = deepcopy(database.data['active_users'])
       available_channels = deepcopy(database.data['available_channels'])
@@ -96,7 +98,7 @@ class Client(discord.Client):
             })
           database.data['channel_guilds'][channel.id] = channel.guild.id
           database.data['channel_names'][channel.id] = channel.name
-          presence_channelc += 1
+          self.presence_channelc += 1
 
           for member in channel.members:
             delayed.append({
@@ -144,7 +146,10 @@ class Client(discord.Client):
 
       database.should_save = True
 
-    activity = discord.Activity(name=f'{presence_channelc} channels', type=discord.ActivityType.watching)
+    await self.update_presence()
+
+  async def update_presence(self):
+    activity = discord.Activity(name=f'{self.presence_channelc} channels', type=discord.ActivityType.watching)
     await self.change_presence(activity=activity)
 
   async def on_ready(self):
@@ -163,7 +168,7 @@ class Client(discord.Client):
       'cause': 'event',
     }
 
-    if not after.channel:
+    if after.channel is None:
       event['type'] = 'leave'
       event['guild'] = before.channel.guild.id
       event['channel'] = before.channel.id
@@ -180,7 +185,7 @@ class Client(discord.Client):
     }
 
     if before.channel != after.channel:
-      if before.channel:
+      if before.channel is not None:
         event['type'] = 'leave'
         event['guild'] = before.channel.guild.id
         event['channel'] = before.channel.id
@@ -207,6 +212,9 @@ class Client(discord.Client):
       database.data['channel_names'][channel.id] = channel.name
       database.should_save = True
 
+      self.presence_channelc += 1
+      await self.update_presence()
+
   async def on_guild_channel_delete(self, channel):
     if isinstance(channel, discord.VoiceChannel):
       # Ideally, we'd like to know when leave events are caused by channel
@@ -218,6 +226,9 @@ class Client(discord.Client):
         'channel': channel.id,
         'cause': 'event',
       })
+
+      self.presence_channelc -= 1
+      await self.update_presence()
 
   async def on_guild_channel_update(self, before, after):
     if isinstance(after, discord.VoiceChannel):
@@ -256,15 +267,15 @@ class Client(discord.Client):
         except ValueError:
           pass
 
-    if report_channel != None:
+    if report_channel is not None:
       channel = self.get_channel(report_channel)
-      if channel and channel.permissions_for(message.author).view_channel:
+      if channel is not None and channel.permissions_for(message.author).view_channel:
         with io.StringIO(report.generate(report_channel)) as file:
           await message.reply(file=discord.File(file, 'report.html'))
       else:
         await message.add_reaction('❓')
 
-    elif content and isinstance(message.author, discord.Member) and message.author.voice != None:
+    elif content and isinstance(message.author, discord.Member) and message.author.voice is not None:
       try:
         database.add_event({
           'type': 'comment',

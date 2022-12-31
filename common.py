@@ -36,13 +36,15 @@ config = {
 def load_config():
   logging.info('Loading config')
   try:
-    config.update(json.load(open(options['config'], 'r')))
+    with open(options['config'], 'r') as file:
+      config.update(json.load(file))
   except FileNotFoundError:
     raise Exception(f'Config not found: {repr(options["config"])}')
 
 def save_config():
   logging.info('Saving config')
-  json.dump(config, open(options['config'], 'w'), indent=2)
+  with open(options['config'], 'w') as file:
+    json.dump(config, file, indent=2)
 
 def parse_duration(string):
   units = {

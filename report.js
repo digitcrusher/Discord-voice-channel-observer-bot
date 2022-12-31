@@ -40,7 +40,7 @@ function dateToString(date) {
   return `${weekday}, ${day} ${month} ${year} ${hours}:${minutes}:${seconds}`;
 }
 
-function moveIndicator(position) {
+function moveIndicator(position, parentOffset) {
   const timeline = document.getElementById('timeline');
   const indicator = document.getElementById('indicator');
   indicator.style.setProperty('--position', Math.min(position, timeline.clientHeight) + 'px');
@@ -49,8 +49,12 @@ function moveIndicator(position) {
   for(const period of timeline.children) {
     if(period === indicator) continue;
 
-    // offsetTop is unfortunately rounded to the nearest integer which may cause off-by-one pixel errors.
-    const offset = period.offsetTop, height = period.clientHeight;
+    /*
+     * offsetTop is imprecisely rounded to the nearest integer which caused
+     * off-by-one pixel errors here before. The offset below is a precise
+     * equivalent of offsetTop.
+     */
+    const offset = Math.round(period.getBoundingClientRect().y + window.scrollY - parentOffset), height = period.clientHeight;
     if(position < offset && indicator.innerText !== '') break;
 
     const time = new Date(period.dataset.begin * 1000), end = new Date(period.dataset.end * 1000);
@@ -72,7 +76,7 @@ function updateMouse() {
       offset += elem.offsetTop;
       elem = elem.offsetParent;
     }
-    moveIndicator(mouseY + window.scrollY - offset);
+    moveIndicator(mouseY + window.scrollY - offset, offset);
   });
 }
 
@@ -89,7 +93,7 @@ window.onload = function() {
     elem.innerText = dateToString(new Date(elem.dataset.timestamp * 1000));
   }
   for(const elem of document.getElementsByClassName('comment')) {
-    elem.setAttribute('title', `Commented on ${dateToString(new Date(elem.dataset.timestamp * 1000))}`);
+    elem.title = `Commented on ${dateToString(new Date(elem.dataset.timestamp * 1000))}`;
   }
   updateMouse();
 };

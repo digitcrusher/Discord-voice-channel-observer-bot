@@ -58,7 +58,8 @@ def load():
             except ValueError:
               result[key] = value
           return result
-      loaded = json.load(open(config['database'], 'r'), object_hook=object_hook)
+      with open(config['database'], 'r') as file:
+        loaded = json.load(file, object_hook=object_hook)
 
       data.update(loaded)
       global should_save
@@ -80,7 +81,8 @@ def save():
             result[item] = None
           return result
         return json.JSONEncoder.default(self, value)
-    json.dump(data, open(config['database'], 'x'), cls=Encoder)
+    with open(config['database'], 'x') as file:
+      json.dump(data, file, cls=Encoder)
 
     global should_save
     should_save = False
@@ -90,7 +92,7 @@ autosave_stop = None
 
 def start():
   global autosave_thread, autosave_stop
-  if autosave_thread or autosave_stop:
+  if autosave_thread is not None or autosave_stop is not None:
     raise Exception('The database is already started')
   logging.info('Starting database')
 
@@ -108,7 +110,7 @@ def start():
 
 def stop():
   global autosave_thread, autosave_stop
-  if not autosave_thread or not autosave_stop:
+  if autosave_thread is None or autosave_stop is None:
     raise Exception('The database is already stopped')
   logging.info('Stopping database')
 
@@ -122,7 +124,7 @@ def clean():
     events = data['events']
     data['events'] = []
     for event in events:
-      if event:
+      if event is not None:
         data['events'].append(event)
 
     data['active_users'] = {}
@@ -145,7 +147,7 @@ def add_event(event):
   event.update(old)
 
   with lock:
-    if event['type'] == 'user_state' and event['value'] == data['user_states'].get(event['user'], None):
+    if event['type'] == 'user_state' and event['user'] in data['user_states'] and event['value'] == data['user_states'][event['user']]:
       return
     elif event['type'] == 'comment' and event['user'] in data['user_last_comment_times']:
       time = datetime.fromisoformat(event['time'])
@@ -167,7 +169,7 @@ def update_cache():
     i = data['cache_eventc']
     while i < len(data['events']):
       event = data['events'][i]
-      if not event:
+      if event is None:
         continue
 
       if event['type'] in {'join', 'leave'}:

@@ -101,7 +101,7 @@ def get_meetings(channel):
       if open_barc > 0:
         end_time = datetime.now().astimezone()
       for column in columns:
-        if not column.bars[-1].end:
+        if column.bars[-1].end is None:
           column.bars[-1].end = end_time
 
       def key(column):
@@ -140,13 +140,13 @@ def get_meetings(channel):
 
   display_states = {}
   for event in database.data['events']:
-    if not event:
+    if event is None:
       continue
 
     type = event['type']
     if type == 'user_state':
       new = DisplayState(event['value'])
-      if new == display_states.get(event['user'], None):
+      if event['user'] in display_states and new == display_states[event['user']]:
         continue
       display_states[event['user']] = new
 
@@ -168,7 +168,7 @@ def get_meetings(channel):
     elif type == 'comment':
       add_comment(user, time, f'https://discord.com/channels/{event["guild"]}/{event["message_channel"]}/{event["message"]}', event['content'])
     elif type == 'user_state':
-      if user in columns and not columns[user].bars[-1].end:
+      if user in columns and columns[user].bars[-1].end is None:
         add_sub(user, time, display_states[user])
     end_time = time
   flush()
@@ -177,16 +177,17 @@ def get_meetings(channel):
 
 def generate(channel):
   result = '<!DOCTYPE html>\n'
-  result += '<html>\n'
+  result += '<html lang="en">\n'
   result += '<head>\n'
   result += '<meta charset="UTF-8">\n'
   result += '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-  result += '<style>\n'
-  result += open('report.css', 'r').read()
-  result += '</style>\n'
-  result += '<script>\n'
-  result += open('report.js', 'r').read()
-  result += '</script>\n'
+  with open('report.css', 'r') as style, open('report.js', 'r') as script:
+    result += '<style>\n'
+    result += style.read()
+    result += '</style>\n'
+    result += '<script>\n'
+    result += script.read()
+    result += '</script>\n'
   result += '</head>\n'
   result += '<body>\n'
 
@@ -267,7 +268,7 @@ def generate(channel):
   result += '<h2>Raw events</h2>\n'
   result += '<pre id="raw-events">\n'
   for event in database.data['events']:
-    if event and event['channel'] == channel:
+    if event is not None and event['channel'] == channel:
       result += str(event) + '\n'
   result += '</pre>\n'
   result += '</footer>\n'
@@ -277,7 +278,8 @@ def generate(channel):
   return result
 
 def op_generate(arg):
-  open('report.html', 'w').write(generate(int(arg)))
+  with open('report.html', 'w') as file:
+    file.write(generate(int(arg)))
 
 console.begin('report')
 console.register('generate', '<channel>', 'generates a channel activity report and saves it to report.html', op_generate)

@@ -18,8 +18,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--back-bg-color);
-  color: var(--back-fg-color);
   font-family: Open Sans, sans-serif;
+  color: var(--back-fg-color);
 }
 
 #all-except-footer {
@@ -38,18 +38,18 @@ header {
   text-align: center;
 }
 header a {
-  color: inherit;
   text-decoration: inherit;
+  color: inherit;
   transition: 0.2s color;
 }
 header a:hover {
   color: darkgray;
 }
 #raw-events {
-  background-color: var(--back-bg-color);
   border-radius: var(--border-radius);
+  background-color: var(--back-bg-color);
   padding: 0.5em;
-  overflow: scroll;
+  overflow: auto;
   color: var(--back-fg-color);
 }
 
@@ -74,8 +74,8 @@ header a:hover {
 }
 
 .meeting-heading {
-  text-align: center;
   cursor: default;
+  text-align: center;
 }
 .meeting-heading > h2 {
   margin: 1.5em 0;
@@ -99,8 +99,8 @@ header a:hover {
 .subs {
   position: relative;
   z-index: 0;
-  background-color: hsl(var(--hue), 40%, 50%);
   border-radius: var(--border-radius);
+  background-color: hsl(var(--hue), 40%, 50%);
   overflow: hidden;
 }
 .open {
@@ -124,8 +124,8 @@ header a:hover {
   max-width: var(--icon-size-with-margins);
   height: min(var(--icon-size-with-margins), 100%);
   padding: var(--icon-margin);
-  color: var(--back-bg-color);
   display: flex;
+  color: var(--back-bg-color);
 }
 .user-state-icon > svg {
   width: 100%;
@@ -134,18 +134,18 @@ header a:hover {
 .comment {
   position: absolute;
   z-index: 1;
-  background-color: #f0f0f0;
   border-radius: calc(var(--icon-size-with-margins) / 2);
   border-top-left-radius: 0;
   min-width: var(--icon-size-with-margins);
   min-height: var(--icon-size-with-margins);
+  background-color: #f0f0f0;
 
   --max-width: 11em;
   --max-height: 10em;
-  transition: 0.2s all;
   max-width: var(--icon-size-with-margins);
   max-height: var(--icon-size-with-margins);
   overflow: clip;
+  transition: 0.2s all;
 }
 .comment:hover {
   z-index: 2;
@@ -166,8 +166,8 @@ header a:hover {
 
   width: var(--icon-size);
   height: var(--icon-size);
-  color: #202020;
   pointer-events: none;
+  color: #202020;
 }
 .comment:hover > svg {
   opacity: 0;
@@ -184,10 +184,10 @@ header a:hover {
   opacity: 0;
 
   padding: 0.25em;
-  color: black;
-  text-decoration: none;
   overflow: scroll;
   scrollbar-color: #202020 transparent;
+  text-decoration: none;
+  color: black;
 }
 .comment:hover > a {
   opacity: 1;
